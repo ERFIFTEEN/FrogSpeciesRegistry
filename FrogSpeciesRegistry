@@ -1,0 +1,162 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/access/Ownable.sol";
+
+contract FrogSpeciesRegistry is Ownable {
+    // Struct for Frog Species
+    struct Frog {
+        uint256 id;
+        string scientificName; // e.g., "Rana temporaria"
+        string habitat; // e.g., "Temperate forests, wetlands"
+        string dataHash; // IPFS hash for detailed data (e.g., JSON with traits, images)
+        address recordedBy; // Contributor who added the entry
+        uint256 timestamp; // Unix timestamp
+        bool isActive;
+    }
+
+    // Struct for Authorized Contributor
+    struct Contributor {
+        address contributorAddress;
+        string name; // e.g., "IUCN", "University Lab"
+        bool isAuthorized;
+    }
+
+    // Counters
+    uint256 private nextFrogId = 1;
+
+    // Mappings
+    mapping(uint256 => Frog) public frogSpecies;
+    mapping(address => Contributor) public contributors;
+    mapping(address => uint256[]) public contributorFrogs; // Contributor to list of frog IDs
+
+    // Events
+    event ContributorAuthorized(address indexed contributor, string name);
+    event ContributorRevoked(address indexed contributor);
+    event FrogRecorded(
+        uint256 indexed frogId,
+        string scientificName,
+        string habitat,
+        string dataHash,
+        address recordedBy
+    );
+    event FrogUpdated(uint256 indexed frogId, string dataHash);
+    event FrogDeactivated(uint256 indexed frogId);
+
+    constructor() Ownable(msg.sender) {}
+
+    // Modifier to restrict access to authorized contributors
+    modifier onlyAuthorizedContributor() {
+        require(contributors[msg.sender].isAuthorized, "Not authorized contributor");
+        _;
+    }
+
+    // Authorize a contributor (e.g., herpetologist, conservation organization)
+    function authorizeContributor(address contributor, string memory name) external onlyOwner {
+        require(contributor != address(0), "Invalid address");
+        require(bytes(name).length > 0, "Name cannot be empty");
+        require(!contributors[contributor].isAuthorized, "Contributor already authorized");
+
+        contributors[contributor] = Contributor(contributor, name, true);
+        emit ContributorAuthorized(contributor, name);
+    }
+
+    // Revoke a contributor's authorization
+    function revokeContributor(address contributor) external onlyOwner {
+        require(contributors[contributor].isAuthorized, "Contributor not authorized");
+        contributors[contributor].isAuthorized = false;
+        emit ContributorRevoked(contributor);
+    }
+
+    // Record a new frog species
+    function recordFrog(
+        string memory scientificName,
+        string memory habitat,
+        string memory dataHash
+    ) external onlyAuthorizedContributor returns (uint256) {
+        require(bytes(scientificName).length > 0, "Scientific name cannot be empty");
+        require(bytes(habitat).length > 0, "Habitat cannot be empty");
+        require(bytes(dataHash).length > 0, "Data hash cannot be empty");
+
+        uint256 frogId = nextFrogId++;
+        frogSpecies[frogId] = Frog(
+            frogId,
+            scientificName,
+            habitat,
+            dataHash,
+            msg.sender,
+            block.timestamp,
+            true
+        );
+        contributorFrogs[msg.sender].push(frogId);
+
+        emit FrogRecorded(frogId, scientificName, habitat, dataHash, msg.sender);
+        return frogId;
+    }
+
+    // Update a frog's data hash (e.g., for updated research)
+    function updateFrog(uint256 frogId, string memory newDataHash) external onlyAuthorizedContributor {
+        require(frogSpecies[frogId].isActive, "Frog not active");
+        require(frogSpecies[frogId].recordedBy == msg.sender, "Not recorded by this contributor");
+        require(bytes(newDataHash).length > 0, "Data hash cannot be empty");
+
+        frogSpecies[frogId].dataHash = newDataHash;
+        frogSpecies[frogId].timestamp = block.timestamp;
+        emit FrogUpdated(frogId, newDataHash);
+    }
+
+    // Deactivate a frog entry
+    function deactivateFrog(uint256 frogId) external {
+        require(frogSpecies[frogId].isActive, "Frog not active");
+        require(
+            frogSpecies[frogId].recordedBy == msg.sender || owner() == msg.sender,
+            "Not authorized"
+        );
+        frogSpecies[frogId].isActive = false;
+        emit FrogDeactivated(frogId);
+    }
+
+    // Get frog details
+    function getFrog(uint256 frogId)
+        external
+        view
+        returns (
+            string memory scientificName,
+            string memory habitat,
+            string memory dataHash,
+            address recordedBy,
+            uint256 timestamp,
+            bool isActive
+        )
+    {
+        require(frogSpecies[frogId].id != 0, "Frog does not exist");
+        Frog memory frog = frogSpecies[frogId];
+        return (
+            frog.scientificName,
+            frog.habitat,
+            frog.dataHash,
+            frog.recordedBy,
+            frog.timestamp,
+            frog.isActive
+        );
+    }
+
+    // Get frogs recorded by a contributor
+    function getContributorFrogs(address contributor)
+        external
+        view
+        returns (uint256[] memory)
+    {
+        return contributorFrogs[contributor];
+    }
+
+    // Get contributor details
+    function getContributor(address contributor)
+        external
+        view
+        returns (string memory name, bool isAuthorized)
+    {
+        Contributor memory c = contributors[contributor];
+        return (c.name, c.isAuthorized);
+    }
+}
